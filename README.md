@@ -21,8 +21,6 @@ You can find the project at [streetsmarts.online](www.streetsmarts.online).
 ![Pandas](https://img.shields.io/badge/Pandas-1.0.4-green)
 ![Heroku](https://img.shields.io/badge/Heroku-10-blueviolet)
 
-More info on using badges [here](https://github.com/badges/shields)
-
 ## Project Overview
 
 
