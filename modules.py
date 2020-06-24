@@ -1,44 +1,27 @@
-import psycopg2
-import os
 import pickle
-from dotenv import load_dotenv
 import pandas as pd
 import numpy as np
 from fuzzywuzzy import fuzz, process
 from joblib import load
 import requests
+from sqlalchemy.orm import Session
+import models
+from database import SessionLocal, engine
+from sqlalchemy.sql import func
 
+#SQLAlchemy
+# https://docs.sqlalchemy.org/en/13/orm/extensions/declarative/basic_use.html#accessing-the-metadata
+models.Base.metadata.create_all(bind=engine)
 
-load_dotenv()
-
-#Load credentials from .env
-name = os.environ["DB_NAME_AWS"]
-password = os.environ["DB_PW_AWS"]
-host = os.environ["DB_HOST_AWS"]
-user = os.environ["DB_USER_AWS"]
-
-pg_conn = psycopg2.connect(dbname=name,
-                        user=user,
-                        password=password,
-                        host=host
-                        )
-## Cursor is always open
-pg_curs = pg_conn.cursor()
+db = SessionLocal()
 
 # Load in slimmed random forest pickled model
-test_model = load("targetiterrobustforest.joblib")
+test_model = load("targetrobustforest.joblib")
 
 # Load the craigslist cleaned data
 df_cl = pd.read_csv("data/model_and_image_url_lookup.csv")
 # List of unique CL cars
 cl_models = sorted(df_cl.model.unique())
-
-def status_200_or_nan(url):
-    response = requests.get(url)
-    if response.status_code == 200:
-        return url
-    else:
-        return np.NaN
 
 class Pred:
     '''    
@@ -70,30 +53,39 @@ class Pred:
         self.co2 = None
         self.model_fz = process.extractOne(self.model_lower, cl_models, scorer=fuzz.token_sort_ratio)[0] 
         self.odometer = odometer
+        self.fire = "\N{fire}"
+        self.tree = "\N{evergreen tree}"
+        self.maint_5yr = self.maint*5
+        
 
     def get_car_pred(self):
 
         input = pd.DataFrame({
         "year": [self.year],
         "manufacturer": [self.manufacturer],
-        "model": [self.model_fz],
-        "odometer": [self.odometer]
+        "model": [self.model_fz]
         })
 
         pred = test_model.predict(input)
         return pred[0]
-
+    
     def get_comb_mpg(self):
-        """Get the combined mpg"""
-        pg_curs.execute(f"select AVG(comb08) FROM epa_vehicles_all WHERE make = '{self.make}' and model = '{self.model}' and year = '{self.year}';")
-        mpg_combined = pg_curs.fetchall()[0][0]
-        return mpg_combined
+        """Get the combined mpg using ORM"""
+        return db.query(func.avg(models.Epa.comb08)\
+        .filter(
+            models.Epa.make==self.make, 
+            models.Epa.model==self.model,
+            models.Epa.year==self.year))\
+                .all()[0][0]
 
     def get_comb_co2(self):
-        """Get the combbined co2"""
-        pg_curs.execute(f"SELECT AVG(co2tailpipegpm) FROM epa_vehicles_all WHERE make = '{self.make}' AND model = '{self.model}' AND year = {self.year};")
-        co2_combined = pg_curs.fetchall()[0][0]
-        return co2_combined
+        """Get the combbined co2 using ORM"""
+        return db.query(func.avg(models.Epa.co2tailpipegpm)\
+            .filter(
+            models.Epa.make==self.make, 
+            models.Epa.model==self.model,
+            models.Epa.year==self.year))\
+                .all()[0][0]
 
     def co2_num_years(self):
         """CO2 over a X year period (Kg)"""
@@ -107,15 +99,25 @@ class Pred:
 
     def cto(self):
         """Get 5 year cost to own"""
-        cto = self.get_fuel_cost() + self.maint + self.get_car_pred()
+        cto = self.get_fuel_cost() + self.maint_5yr + self.get_car_pred()
         return cto
 
     def co2_offset(self):
         """How many trees to offset co2 emissions"""
-        
         ## Number of kgs of CO2 absorbed by one tree per year
         tree_absorption = 21.7724
         return self.co2_num_years()/(tree_absorption * self.years)
+    
+    def emoji(self):
+        """graphically represent CO2 emissions as emoji"""
+        offset = int(round(self.co2_offset(), 0))
+        fire_e = offset//100 
+        tree_e = 10 - fire_e
+        fire_total = self.fire * fire_e
+        tree_total = self.tree * tree_e
+        ft = fire_total + tree_total
+        emoji_graph = [ft for x in range(5)]
+        return emoji_graph
 
     #### Images of Selected Car
 
@@ -128,7 +130,7 @@ class Pred:
         index_of_model_year = df_models_at_year.index[0:4]
 
         list_urls = list(df_cl['image_url'][index_of_model_year])
-        list_w_nan = [status_200_or_nan(x) for x in list_urls]
+        list_w_nan = [self.status_200_or_nan(x) for x in list_urls]
         clean_list_urls = [x for x in list_w_nan if x is not np.NaN]
         return clean_list_urls
 
@@ -153,3 +155,10 @@ class Pred:
                 return clean_list_urls
             return clean_list_urls
         return clean_list_urls
+    
+    def status_200_or_nan(self, url):
+        response = requests.get(url)
+        if response.status_code == 200:
+            return url
+        else:
+            return np.NaN
