@@ -2,8 +2,7 @@
 # --reload lets you hot reload your app after making changes
 
 from fastapi import FastAPI, Depends
-from modules import Pred, status_200_or_nan
-
+from modules import Pred
 app = FastAPI()
 
 @app.get("/")
@@ -22,4 +21,7 @@ async def test_class(pred: Pred = Depends(Pred)):
             "five_year_cost_to_own": round(pred.cto(), 2),
             "co2_five_year_kgs": round(pred.co2_num_years(), 2), 
             "number_of_trees_to_offset": round(pred.co2_offset(), 0),
-            "list_of_imgs": pred.fetch_img()} 
+            "trees_burned_emoji": pred.emoji(),
+            "list_of_imgs": pred.fetch_img(),
+            "maintenance_cost_5yr": pred.maint_5yr
+            } 
